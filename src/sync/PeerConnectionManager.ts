@@ -5,6 +5,7 @@ import type { PeerLink } from './PeerLink.ts';
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 
 const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ROOM_CODE_PATTERN = new RegExp(`^[${ROOM_CODE_CHARS}]{6}$`);
 
 function generateRoomCode(length = 6): string {
   let code = '';
@@ -14,6 +15,14 @@ function generateRoomCode(length = 6): string {
   return code;
 }
 
+function normalizeRoomCode(roomCode: string): string {
+  const normalized = roomCode.trim().toUpperCase();
+  if (!ROOM_CODE_PATTERN.test(normalized)) {
+    throw new Error('Room codes must use six unambiguous letters or numbers.');
+  }
+  return normalized;
+}
+
 export class PeerConnectionManager implements PeerLink {
   readonly localId: string;
   private peer: Peer;
@@ -21,8 +30,8 @@ export class PeerConnectionManager implements PeerLink {
   private messageListeners: Array<(message: PeerMessage) => void> = [];
   private statusListeners: Array<(status: ConnectionStatus) => void> = [];
 
-  constructor() {
-    this.localId = generateRoomCode();
+  constructor(roomCode?: string) {
+    this.localId = roomCode ? normalizeRoomCode(roomCode) : generateRoomCode();
     this.peer = new Peer(this.localId);
     this.peer.on('connection', (conn) => this.attachConnection(conn));
     this.peer.on('error', () => this.emitStatus('error'));

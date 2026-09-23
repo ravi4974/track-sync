@@ -1,4 +1,5 @@
 import './style.css';
+import { Check, createIcons, Heart, History, Link2, ListMusic, Pause, Play, Plus, Shuffle, SkipBack, SkipForward, X } from 'lucide';
 import { YouTubeProvider } from './providers/YouTubeProvider.ts';
 import { PeerConnectionManager } from './sync/PeerConnectionManager.ts';
 import { ClockSync } from './sync/ClockSync.ts';
@@ -7,55 +8,106 @@ import { LibrarySyncService } from './sync/LibrarySyncService.ts';
 import { LibraryStore } from './storage/LibraryStore.ts';
 import { PlaybackQueue, type QueueItem } from './queue/PlaybackQueue.ts';
 
+const playerIcons = { Check, Heart, History, Link2, ListMusic, Pause, Play, Plus, Shuffle, SkipBack, SkipForward, X };
+const ROOM_CODE_STORAGE_KEY = 'track-sync-room-code';
+
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <div id="app-layout">
-    <div id="main-column">
-      <section id="pairing">
-        <p>Your room code: <strong id="local-code">...</strong> | status: <span id="status">idle</span></p>
-        <input id="remote-code" placeholder="Enter peer's room code" maxlength="6" />
-        <button id="connect-btn" class="icon-btn" title="Connect" aria-label="Connect">🔗</button>
+    <header id="topbar">
+      <a class="brand" href="/" aria-label="Track Sync home">track<span>sync</span></a>
+      <section id="pairing" aria-label="Room connection">
+        <div class="room-code">
+          <label class="room-label" for="local-code-input">Your room</label>
+          <div class="room-code-editor">
+            <input id="local-code-input" value="..." maxlength="6" autocomplete="off" spellcheck="false" aria-label="Your room code" />
+            <button id="set-local-code-btn" class="icon-btn" title="Use this room code" aria-label="Use this room code"><i data-lucide="check"></i></button>
+          </div>
+        </div>
+        <span class="connection-status"><span class="status-dot"></span><span id="status">idle</span></span>
+        <div class="connect-form">
+          <input id="remote-code" placeholder="Enter room code" maxlength="6" aria-label="Peer room code" />
+          <button id="connect-btn" class="icon-btn connect-btn" title="Connect to room" aria-label="Connect to room"><i data-lucide="link-2"></i></button>
+        </div>
       </section>
-      <section id="player-section">
-        <div id="player"></div>
+    </header>
+    <div id="content-grid">
+      <main id="main-column">
+        <section id="player-section">
+          <div class="player-frame">
+            <div id="player"></div>
+          </div>
+          <div class="player-info">
+            <div>
+              <p class="eyebrow">Now playing</p>
+              <h1 id="current-title">Ready to play</h1>
+              <p id="current-subtitle">Add a YouTube video to start the session.</p>
+            </div>
+            <button id="favorite-btn" class="icon-btn favorite-btn" title="Add to Favorites" aria-label="Add to Favorites"><i data-lucide="heart"></i></button>
+          </div>
         <div id="player-controls">
-          <button id="prev-btn" class="icon-btn" aria-label="Previous">⏮</button>
-          <button id="play-pause-btn" class="icon-btn" aria-label="Play">▶</button>
-          <button id="next-btn" class="icon-btn" aria-label="Next">⏭</button>
-          <button id="favorite-btn" class="icon-btn" title="Add to Favorites" aria-label="Add to Favorites">☆</button>
-          <button id="queue-toggle-btn" class="icon-btn" aria-expanded="false" title="Queue" aria-label="Toggle queue">📋</button>
+          <div class="transport-controls">
+            <button id="prev-btn" class="icon-btn" title="Previous" aria-label="Previous"><i data-lucide="skip-back"></i></button>
+            <button id="play-pause-btn" class="icon-btn play-btn" aria-label="Play"><i data-lucide="play"></i></button>
+            <button id="next-btn" class="icon-btn" title="Next" aria-label="Next"><i data-lucide="skip-forward"></i></button>
+          </div>
+          <button id="queue-toggle-btn" class="icon-btn queue-toggle" aria-expanded="false" title="Queue" aria-label="Toggle queue"><i data-lucide="list-music"></i><span>Queue</span></button>
         </div>
       </section>
       <section id="library">
-        <h2>Favorites</h2>
-        <ul id="favorites-list"></ul>
-        <h2>History</h2>
-        <ul id="history-list"></ul>
+        <div class="library-group">
+          <div class="section-heading"><i data-lucide="heart"></i><h2>Favorites</h2></div>
+          <ul id="favorites-list"></ul>
+        </div>
+        <div class="library-group">
+          <div class="section-heading"><i data-lucide="history"></i><h2>History</h2></div>
+          <ul id="history-list"></ul>
+        </div>
       </section>
-    </div>
-    <aside id="queue-panel">
+      </main>
+      <aside id="queue-panel">
       <div id="queue-panel-header">
-        <h2>Queue</h2>
-        <button id="queue-close-btn" class="icon-btn" title="Close queue" aria-label="Close queue">✕</button>
+        <div class="section-heading"><i data-lucide="list-music"></i><h2>Queue</h2></div>
+        <button id="queue-close-btn" class="icon-btn" title="Close queue" aria-label="Close queue"><i data-lucide="x"></i></button>
       </div>
       <div id="queue-add">
         <input id="queue-input" placeholder="YouTube video ID or URL" />
-        <button id="queue-add-btn" class="icon-btn" title="Add to queue" aria-label="Add to queue">➕</button>
+        <button id="queue-add-btn" class="icon-btn add-btn" title="Add to queue" aria-label="Add to queue"><i data-lucide="plus"></i></button>
       </div>
-      <button id="queue-shuffle-btn" class="icon-btn" title="Shuffle queue" aria-label="Shuffle queue">🔀</button>
+      <button id="queue-shuffle-btn" class="text-btn" title="Shuffle queue"><i data-lucide="shuffle"></i>Shuffle queue</button>
       <ul id="queue-list"></ul>
-    </aside>
+      </aside>
+    </div>
   </div>
 `;
 
+createIcons({ icons: playerIcons });
+
 const provider = new YouTubeProvider('player');
-const connection = new PeerConnectionManager();
+const savedRoomCode = sessionStorage.getItem(ROOM_CODE_STORAGE_KEY) ?? undefined;
+const connection = new PeerConnectionManager(savedRoomCode);
 const store = new LibraryStore();
 const clockSync = new ClockSync(connection);
 const playbackSync = new PlaybackSyncService(provider, connection, clockSync);
 const librarySync = new LibrarySyncService(store, connection);
 
-document.querySelector('#local-code')!.textContent = connection.localId;
+const localCodeInput = document.querySelector<HTMLInputElement>('#local-code-input')!;
+localCodeInput.value = connection.localId;
+localCodeInput.addEventListener('input', () => {
+  localCodeInput.value = localCodeInput.value.toUpperCase();
+  localCodeInput.setCustomValidity('');
+});
+document.querySelector('#set-local-code-btn')!.addEventListener('click', () => {
+  const roomCode = localCodeInput.value.trim().toUpperCase();
+  if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(roomCode)) {
+    localCodeInput.setCustomValidity('Use six letters or numbers, excluding I, O, 0, and 1.');
+    localCodeInput.reportValidity();
+    return;
+  }
+  if (roomCode === connection.localId) return;
+  sessionStorage.setItem(ROOM_CODE_STORAGE_KEY, roomCode);
+  window.location.reload();
+});
 connection.onStatusChange((status) => {
   document.querySelector('#status')!.textContent = status;
 });
@@ -71,8 +123,13 @@ playPauseBtn.addEventListener('click', () => {
   else void playbackSync.play();
 });
 provider.onStateChange((state) => {
-  playPauseBtn.textContent = state.isPlaying ? '⏸' : '▶';
+  playPauseBtn.innerHTML = `<i data-lucide="${state.isPlaying ? 'pause' : 'play'}"></i>`;
+  createIcons({ icons: playerIcons });
   playPauseBtn.setAttribute('aria-label', state.isPlaying ? 'Pause' : 'Play');
+  if (state.trackId) {
+    document.querySelector('#current-title')!.textContent = state.title || state.trackId;
+    document.querySelector('#current-subtitle')!.textContent = state.isPlaying ? 'Playing in this shared room' : 'Paused in this shared room';
+  }
 });
 
 const queuePanel = document.querySelector<HTMLElement>('#queue-panel')!;
