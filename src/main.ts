@@ -48,7 +48,10 @@ app.innerHTML = `
           </div>
           <div id="seek-controls">
             <span id="elapsed-time">0:00</span>
-            <input id="seek-bar" type="range" min="0" max="0" value="0" step="0.1" aria-label="Seek playback position" disabled />
+            <div id="seek-timeline">
+              <div id="seek-fill"></div>
+              <input id="seek-bar" type="range" min="0" max="0" value="0" step="0.1" aria-label="Seek playback position" disabled />
+            </div>
             <span id="duration-time">0:00</span>
           </div>
         <div id="player-controls">
@@ -134,11 +137,13 @@ document.querySelector('#connect-btn')!.addEventListener('click', () => {
 
 const playPauseBtn = document.querySelector<HTMLButtonElement>('#play-pause-btn')!;
 const seekBar = document.querySelector<HTMLInputElement>('#seek-bar')!;
+const seekTimeline = document.querySelector<HTMLDivElement>('#seek-timeline')!;
 const elapsedTime = document.querySelector<HTMLSpanElement>('#elapsed-time')!;
 const durationTime = document.querySelector<HTMLSpanElement>('#duration-time')!;
 let isSeeking = false;
 
 function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '0:00';
   const wholeSeconds = Math.max(0, Math.floor(seconds));
   return `${Math.floor(wholeSeconds / 60)}:${String(wholeSeconds % 60).padStart(2, '0')}`;
 }
@@ -148,9 +153,12 @@ function updateSeekControls(): void {
   const duration = provider.getDuration();
   const elapsed = state.isPlaying ? state.positionSec + (Date.now() - state.updatedAt) / 1000 : state.positionSec;
   const position = Math.min(Math.max(elapsed, 0), duration || elapsed);
+  const progress = duration > 0 ? (position / duration) * 100 : 0;
   seekBar.max = String(duration);
   seekBar.disabled = duration <= 0;
   if (!isSeeking) seekBar.value = String(position);
+  seekTimeline.style.setProperty('--progress', `${progress}%`);
+  seekTimeline.classList.toggle('playing', state.isPlaying && duration > 0);
   elapsedTime.textContent = formatTime(isSeeking ? Number(seekBar.value) : position);
   durationTime.textContent = formatTime(duration);
 }

@@ -106,11 +106,12 @@ export class YouTubeProvider implements MediaProvider {
   private updateState(partial: Partial<PlaybackState>, emitPositionSample = false): void {
     if (!this.player) return;
     const previous = this.state;
+    const playerPositionSec = this.player.getCurrentTime();
     const next: PlaybackState = {
       trackId: this.player.getVideoData()?.video_id ?? previous.trackId,
       title: this.currentTitle ?? previous.title,
       isPlaying: previous.isPlaying,
-      positionSec: this.player.getCurrentTime(),
+      positionSec: Number.isFinite(playerPositionSec) ? playerPositionSec : previous.positionSec,
       updatedAt: Date.now(),
       ...partial,
     };
@@ -221,7 +222,8 @@ export class YouTubeProvider implements MediaProvider {
   }
 
   getDuration(): number {
-    return this.player?.getDuration() ?? 0;
+    const duration = typeof this.player?.getDuration === 'function' ? this.player.getDuration() : 0;
+    return Number.isFinite(duration) ? duration : 0;
   }
 
   onStateChange(cb: (state: PlaybackState) => void): void {
