@@ -1,8 +1,5 @@
 import './style.css';
 import { YouTubeProvider } from './providers/YouTubeProvider.ts';
-import { SpotifyProvider } from './providers/SpotifyProvider.ts';
-import { RoutedMediaProvider } from './providers/RoutedMediaProvider.ts';
-import { parseMediaUrl } from './providers/mediaUrl.ts';
 import { PeerConnectionManager } from './sync/PeerConnectionManager.ts';
 import { ClockSync } from './sync/ClockSync.ts';
 import { PlaybackSyncService } from './sync/PlaybackSyncService.ts';
@@ -20,7 +17,7 @@ app.innerHTML = `
         <button id="connect-btn" class="icon-btn" title="Connect" aria-label="Connect">🔗</button>
       </section>
       <section id="player-section">
-        <div id="player"><div id="youtube-player" hidden></div><div id="spotify-player" hidden></div></div>
+        <div id="player"></div>
         <div id="player-controls">
           <button id="prev-btn" class="icon-btn" aria-label="Previous">⏮</button>
           <button id="play-pause-btn" class="icon-btn" aria-label="Play">▶</button>
@@ -42,7 +39,7 @@ app.innerHTML = `
         <button id="queue-close-btn" class="icon-btn" title="Close queue" aria-label="Close queue">✕</button>
       </div>
       <div id="queue-add">
-        <input id="queue-input" placeholder="YouTube or Spotify URL" />
+        <input id="queue-input" placeholder="YouTube video ID or URL" />
         <button id="queue-add-btn" class="icon-btn" title="Add to queue" aria-label="Add to queue">➕</button>
       </div>
       <button id="queue-shuffle-btn" class="icon-btn" title="Shuffle queue" aria-label="Shuffle queue">🔀</button>
@@ -51,15 +48,7 @@ app.innerHTML = `
   </div>
 `;
 
-const youtubeProvider = new YouTubeProvider('youtube-player');
-const spotifyProvider = new SpotifyProvider('spotify-player');
-const youtubePlayer = document.querySelector<HTMLElement>('#youtube-player')!;
-const spotifyPlayer = document.querySelector<HTMLElement>('#spotify-player')!;
-const provider = new RoutedMediaProvider(youtubeProvider, spotifyProvider, (activeProvider) => {
-  const showSpotify = activeProvider === 'spotify';
-  youtubePlayer.hidden = showSpotify;
-  spotifyPlayer.hidden = !showSpotify;
-});
+const provider = new YouTubeProvider('player');
 const connection = new PeerConnectionManager();
 const store = new LibraryStore();
 const clockSync = new ClockSync(connection);
@@ -113,6 +102,16 @@ for (const listId of ['favorites-list', 'history-list']) {
   });
 }
 
+function extractVideoId(input: string): string | null {
+  if (/^[\w-]{11}$/.test(input)) return input;
+  try {
+    const url = new URL(input);
+    return url.searchParams.get('v') ?? url.pathname.split('/').pop() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const playbackQueue = new PlaybackQueue();
 let draggedQueueId: string | null = null;
 
@@ -152,7 +151,7 @@ nextBtn.addEventListener('click', () => {
 
 document.querySelector('#queue-add-btn')!.addEventListener('click', async () => {
   const input = document.querySelector<HTMLInputElement>('#queue-input')!;
-  const trackId = parseMediaUrl(input.value.trim());
+  const trackId = extractVideoId(input.value.trim());
   if (!trackId) return;
   
   // Load the video to fetch its title
