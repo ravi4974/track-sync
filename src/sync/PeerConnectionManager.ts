@@ -3,6 +3,10 @@ import type { PeerMessage } from './protocol.ts';
 import type { PeerLink } from './PeerLink.ts';
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+export interface PeerDisconnectedEvent {
+  peerId: string;
+  allDisconnected: boolean;
+}
 
 const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROOM_CODE_PATTERN = new RegExp(`^[${ROOM_CODE_CHARS}]{6}$`);
@@ -29,6 +33,7 @@ export class PeerConnectionManager implements PeerLink {
   private connections = new Map<string, DataConnection>();
   private messageListeners: Array<(message: PeerMessage) => void> = [];
   private statusListeners: Array<(status: ConnectionStatus) => void> = [];
+  private peerDisconnectedListeners: Array<(event: PeerDisconnectedEvent) => void> = [];
 
   constructor(roomCode?: string) {
     this.localId = roomCode ? normalizeRoomCode(roomCode) : generateRoomCode();
@@ -53,8 +58,10 @@ export class PeerConnectionManager implements PeerLink {
       for (const listener of this.messageListeners) listener(data as PeerMessage);
     });
     conn.on('close', () => {
-      this.connections.delete(conn.peer);
-      this.emitStatus('disconnected');
+      if (!this.connections.delete(conn.peer)) return;
+      const allDisconnected = this.connections.size === 0;
+      this.emitStatus(allDisconnected ? 'idle' : 'connected');
+      for (const listener of this.peerDisconnectedListeners) listener({ peerId: conn.peer, allDisconnected });
     });
     conn.on('error', () => this.emitStatus('error'));
   }
@@ -69,6 +76,10 @@ export class PeerConnectionManager implements PeerLink {
 
   onStatusChange(cb: (status: ConnectionStatus) => void): void {
     this.statusListeners.push(cb);
+  }
+
+  onPeerDisconnected(cb: (event: PeerDisconnectedEvent) => void): void {
+    this.peerDisconnectedListeners.push(cb);
   }
 
   private emitStatus(status: ConnectionStatus): void {

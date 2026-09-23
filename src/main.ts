@@ -78,6 +78,7 @@ app.innerHTML = `
       <ul id="queue-list"></ul>
       </aside>
     </div>
+    <div id="notification" role="status" aria-live="polite"></div>
   </div>
 `;
 
@@ -110,6 +111,14 @@ document.querySelector('#set-local-code-btn')!.addEventListener('click', () => {
 });
 connection.onStatusChange((status) => {
   document.querySelector('#status')!.textContent = status;
+});
+const notification = document.querySelector<HTMLDivElement>('#notification')!;
+let notificationTimeout: ReturnType<typeof setTimeout> | null = null;
+connection.onPeerDisconnected(({ peerId, allDisconnected }) => {
+  notification.textContent = `${peerId} disconnected${allDisconnected ? '. Room is now idle.' : '.'}`;
+  notification.classList.add('visible');
+  if (notificationTimeout) clearTimeout(notificationTimeout);
+  notificationTimeout = setTimeout(() => notification.classList.remove('visible'), 4_000);
 });
 
 document.querySelector('#connect-btn')!.addEventListener('click', () => {
