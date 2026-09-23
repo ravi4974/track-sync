@@ -16,6 +16,7 @@ export interface PlaybackCommand {
 
 export interface QueueSnapshot {
   items: QueueItem[];
+  currentId: string | null;
   updatedAt: number;
 }
 

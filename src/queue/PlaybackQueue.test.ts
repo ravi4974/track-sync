@@ -57,40 +57,53 @@ describe('PlaybackQueue', () => {
     expect(queue.queue.map((item) => item.id)).toEqual(['id-a', 'id-b']);
   });
 
-  it('dequeues the next track and records the current one in history', () => {
+  it('selects the next track without removing playlist entries', () => {
     const queue = new PlaybackQueue();
+    queue.add('track-a', 'id-a');
     queue.add('track-b', 'id-b');
     queue.add('track-c', 'id-c');
+    queue.select('id-a');
 
-    const nextTrackId = queue.next('track-a');
+    const nextTrackId = queue.next();
 
     expect(nextTrackId).toBe('track-b');
-    expect(queue.queue.map((item) => item.trackId)).toEqual(['track-c']);
+    expect(queue.currentId).toBe('id-b');
+    expect(queue.queue.map((item) => item.trackId)).toEqual(['track-a', 'track-b', 'track-c']);
     expect(queue.canGoPrevious).toBe(true);
   });
 
   it('returns null from next() when the queue is empty', () => {
     const queue = new PlaybackQueue();
 
-    expect(queue.next('track-a')).toBeNull();
+    expect(queue.next()).toBeNull();
   });
 
-  it('steps back through history and re-enqueues the current track', () => {
+  it('does not advance until a current playlist item is selected', () => {
     const queue = new PlaybackQueue();
     queue.add('track-b', 'id-b');
-    queue.next('track-a'); // history: [track-a], queue: []
 
-    const prevTrackId = queue.previous('track-b');
+    expect(queue.next()).toBeNull();
+    expect(queue.queue).toEqual([{ id: 'id-b', trackId: 'track-b' }]);
+    expect(queue.canGoPrevious).toBe(false);
+  });
+
+  it('selects the previous track without changing playlist entries', () => {
+    const queue = new PlaybackQueue();
+    queue.add('track-a', 'id-a');
+    queue.add('track-b', 'id-b');
+    queue.select('id-b');
+
+    const prevTrackId = queue.previous();
 
     expect(prevTrackId).toBe('track-a');
-    expect(queue.queue.map((item) => item.trackId)).toEqual(['track-b']);
-    expect(queue.canGoPrevious).toBe(false);
+    expect(queue.currentId).toBe('id-a');
+    expect(queue.queue.map((item) => item.trackId)).toEqual(['track-a', 'track-b']);
   });
 
   it('returns null from previous() when there is no history', () => {
     const queue = new PlaybackQueue();
 
-    expect(queue.previous('track-a')).toBeNull();
+    expect(queue.previous()).toBeNull();
   });
 
   it('reflects queue/history emptiness via canGoNext and canGoPrevious', () => {
@@ -100,9 +113,12 @@ describe('PlaybackQueue', () => {
     expect(queue.canGoPrevious).toBe(false);
 
     queue.add('track-a', 'id-a');
-    expect(queue.canGoNext).toBe(true);
+    queue.select('id-a');
+    expect(queue.canGoNext).toBe(false);
 
-    queue.next('current');
+    queue.add('track-b', 'id-b');
+    expect(queue.canGoNext).toBe(true);
+    queue.next();
     expect(queue.canGoNext).toBe(false);
     expect(queue.canGoPrevious).toBe(true);
   });
@@ -116,11 +132,12 @@ describe('PlaybackQueue', () => {
     queue.add('track-b', 'id-b');
     queue.reorder('id-a', 'id-b');
     queue.shuffle(() => 0);
-    queue.next('current');
-    queue.previous('track-x');
+    queue.select('id-a');
+    queue.next();
+    queue.previous();
     queue.remove('id-a');
 
-    expect(listener).toHaveBeenCalledTimes(7);
+    expect(listener).toHaveBeenCalledTimes(8);
   });
 
   it('adds a track with an optional title', () => {
@@ -132,6 +149,19 @@ describe('PlaybackQueue', () => {
     expect(queue.queue).toEqual([
       { id: 'id-a', trackId: 'track-a', title: 'My Video Title' },
       { id: 'id-b', trackId: 'track-b', title: undefined },
+    ]);
+  });
+
+  it('updates a queued track title without changing its position', () => {
+    const queue = new PlaybackQueue();
+    queue.add('track-a', 'id-a');
+    queue.add('track-b', 'id-b');
+
+    queue.setTitle('id-b', 'My Video Title');
+
+    expect(queue.queue).toEqual([
+      { id: 'id-a', trackId: 'track-a', title: undefined },
+      { id: 'id-b', trackId: 'track-b', title: 'My Video Title' },
     ]);
   });
 
@@ -179,14 +209,20 @@ describe('PlaybackQueue', () => {
     ]);
   });
 
-  it('dequeues next track with title preserved', () => {
+  it('preserves titles while selecting the next track', () => {
     const queue = new PlaybackQueue();
+    queue.add('track-a', 'id-a', 'Title A');
     queue.add('track-b', 'id-b', 'Title B');
     queue.add('track-c', 'id-c', 'Title C');
+    queue.select('id-a');
 
-    const nextTrackId = queue.next('track-a');
+    const nextTrackId = queue.next();
 
     expect(nextTrackId).toBe('track-b');
-    expect(queue.queue).toEqual([{ id: 'id-c', trackId: 'track-c', title: 'Title C' }]);
+    expect(queue.queue).toEqual([
+      { id: 'id-a', trackId: 'track-a', title: 'Title A' },
+      { id: 'id-b', trackId: 'track-b', title: 'Title B' },
+      { id: 'id-c', trackId: 'track-c', title: 'Title C' },
+    ]);
   });
 });

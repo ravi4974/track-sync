@@ -107,6 +107,21 @@ describe('PlaybackSyncService', () => {
     });
   });
 
+  it('broadcasts and applies a scheduled command for a local seek', async () => {
+    const provider = new FakeProvider();
+    provider.state = { trackId: 'abc12345678', isPlaying: false, positionSec: 5, updatedAt: Date.now() };
+    const link = new FakePeerLink();
+    const service = new PlaybackSyncService(provider, link);
+
+    await service.seek(42);
+
+    expect(provider.getState().positionSec).toBe(42);
+    expect(link.sent[0]).toMatchObject({
+      type: 'PLAYBACK_COMMAND',
+      payload: { state: { trackId: 'abc12345678', positionSec: 42 } },
+    });
+  });
+
   it('applies a scheduled command without echoing it', async () => {
     const provider = new FakeProvider();
     const link = new FakePeerLink();

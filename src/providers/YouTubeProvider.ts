@@ -220,6 +220,10 @@ export class YouTubeProvider implements MediaProvider {
     return this.state;
   }
 
+  getDuration(): number {
+    return this.player?.getDuration() ?? 0;
+  }
+
   onStateChange(cb: (state: PlaybackState) => void): void {
     this.listeners.push(cb);
   }

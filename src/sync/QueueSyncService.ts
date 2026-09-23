@@ -39,6 +39,7 @@ export class QueueSyncService {
   private broadcastSnapshot(): void {
     const payload: QueueSnapshot = {
       items: this.queue.queue.map((item) => ({ ...item })),
+      currentId: this.queue.currentId,
       updatedAt: this.updatedAt,
     };
     this.connection.broadcast({
@@ -60,7 +61,7 @@ export class QueueSyncService {
     this.updatedAt = message.payload.updatedAt;
     this.updatedBy = message.senderId;
     this.applyingRemoteUpdate = true;
-    this.queue.replace(message.payload.items);
+    this.queue.replace(message.payload.items, message.payload.currentId);
     this.applyingRemoteUpdate = false;
   }
 

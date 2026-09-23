@@ -46,6 +46,11 @@ app.innerHTML = `
             </div>
             <button id="favorite-btn" class="icon-btn favorite-btn" title="Add to Favorites" aria-label="Add to Favorites"><i data-lucide="heart"></i></button>
           </div>
+          <div id="seek-controls">
+            <span id="elapsed-time">0:00</span>
+            <input id="seek-bar" type="range" min="0" max="0" value="0" step="0.1" aria-label="Seek playback position" disabled />
+            <span id="duration-time">0:00</span>
+          </div>
         <div id="player-controls">
           <div class="transport-controls">
             <button id="prev-btn" class="icon-btn" title="Previous" aria-label="Previous"><i data-lucide="skip-back"></i></button>
@@ -128,6 +133,39 @@ document.querySelector('#connect-btn')!.addEventListener('click', () => {
 });
 
 const playPauseBtn = document.querySelector<HTMLButtonElement>('#play-pause-btn')!;
+const seekBar = document.querySelector<HTMLInputElement>('#seek-bar')!;
+const elapsedTime = document.querySelector<HTMLSpanElement>('#elapsed-time')!;
+const durationTime = document.querySelector<HTMLSpanElement>('#duration-time')!;
+let isSeeking = false;
+
+function formatTime(seconds: number): string {
+  const wholeSeconds = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(wholeSeconds / 60)}:${String(wholeSeconds % 60).padStart(2, '0')}`;
+}
+
+function updateSeekControls(): void {
+  const state = provider.getState();
+  const duration = provider.getDuration();
+  const elapsed = state.isPlaying ? state.positionSec + (Date.now() - state.updatedAt) / 1000 : state.positionSec;
+  const position = Math.min(Math.max(elapsed, 0), duration || elapsed);
+  seekBar.max = String(duration);
+  seekBar.disabled = duration <= 0;
+  if (!isSeeking) seekBar.value = String(position);
+  elapsedTime.textContent = formatTime(isSeeking ? Number(seekBar.value) : position);
+  durationTime.textContent = formatTime(duration);
+}
+
+seekBar.addEventListener('pointerdown', () => { isSeeking = true; });
+seekBar.addEventListener('input', () => {
+  isSeeking = true;
+  elapsedTime.textContent = formatTime(Number(seekBar.value));
+});
+seekBar.addEventListener('change', () => {
+  isSeeking = false;
+  void playbackSync.seek(Number(seekBar.value));
+});
+setInterval(updateSeekControls, 250);
+
 playPauseBtn.addEventListener('click', () => {
   if (provider.getState().isPlaying) void playbackSync.pause();
   else void playbackSync.play();
@@ -140,6 +178,7 @@ provider.onStateChange((state) => {
     document.querySelector('#current-title')!.textContent = state.title || state.trackId;
     document.querySelector('#current-subtitle')!.textContent = state.isPlaying ? 'Playing in this shared room' : 'Paused in this shared room';
   }
+  updateSeekControls();
 });
 
 const queuePanel = document.querySelector<HTMLElement>('#queue-panel')!;
@@ -179,6 +218,17 @@ function extractVideoId(input: string): string | null {
   }
 }
 
+async function fetchVideoTitle(trackId: string): Promise<string | null> {
+  try {
+    const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${trackId}`)}&format=json`);
+    if (!response.ok) return null;
+    const metadata = await response.json() as { title?: unknown };
+    return typeof metadata.title === 'string' && metadata.title.trim() ? metadata.title.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 const playbackQueue = new PlaybackQueue();
 new QueueSyncService(playbackQueue, connection);
 let draggedQueueId: string | null = null;
@@ -191,7 +241,7 @@ function renderQueue(): void {
   queueList.innerHTML = playbackQueue.queue
     .map(
       (item: QueueItem) => `
-        <li data-id="${item.id}">
+        <li data-id="${item.id}"${item.id === playbackQueue.currentId ? ' class="current"' : ''}>
           <span class="queue-drag-handle" draggable="true" aria-label="Drag to reorder">⠿</span>
           <div class="queue-item-content">
             <span class="queue-track" data-track="${item.trackId}">${item.title || item.trackId}</span>
@@ -208,12 +258,12 @@ function renderQueue(): void {
 playbackQueue.onChange(renderQueue);
 
 prevBtn.addEventListener('click', () => {
-  const prevTrackId = playbackQueue.previous(provider.getState().trackId);
+  const prevTrackId = playbackQueue.previous();
   if (prevTrackId) void playbackSync.load(prevTrackId);
 });
 
 nextBtn.addEventListener('click', () => {
-  const nextTrackId = playbackQueue.next(provider.getState().trackId);
+  const nextTrackId = playbackQueue.next();
   if (nextTrackId) void playbackSync.load(nextTrackId);
 });
 
@@ -222,13 +272,13 @@ document.querySelector('#queue-add-btn')!.addEventListener('click', async () => 
   const trackId = extractVideoId(input.value.trim());
   if (!trackId) return;
 
-  if (provider.getState().isPlaying) {
-    playbackQueue.add(trackId);
-  } else {
+  const item = playbackQueue.add(trackId);
+  void fetchVideoTitle(trackId).then((title) => {
+    if (title) playbackQueue.setTitle(item.id, title);
+  });
+  if (!provider.getState().trackId) {
+    playbackQueue.select(item.id);
     await playbackSync.load(trackId);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    const title = (provider as any).getVideoTitle?.();
-    playbackQueue.add(trackId, crypto.randomUUID(), title);
   }
   input.value = '';
 });
@@ -244,8 +294,11 @@ queueList.addEventListener('click', (event) => {
     playbackQueue.remove(removeId);
     return;
   }
-  const trackId = target.closest<HTMLElement>('.queue-track')?.dataset.track;
-  if (trackId) void playbackSync.load(trackId);
+  const itemId = target.closest<HTMLLIElement>('li')?.dataset.id;
+  if (itemId) {
+    const trackId = playbackQueue.select(itemId);
+    if (trackId) void playbackSync.load(trackId);
+  }
 });
 
 // Only the drag handle initiates dragging, so clicking/removing the rest of the row stays reliable.

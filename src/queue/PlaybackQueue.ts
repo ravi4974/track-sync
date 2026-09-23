@@ -1,4 +1,4 @@
-// Pure queue/history state for the "up next" list, kept separate from DOM so it's unit-testable.
+// Pure playlist state, kept separate from DOM so it's unit-testable.
 
 export interface QueueItem {
   id: string;
@@ -8,23 +8,28 @@ export interface QueueItem {
 
 export class PlaybackQueue {
   private items: QueueItem[] = [];
-  private history: string[] = [];
+  private currentItemId: string | null = null;
   private listeners: Array<() => void> = [];
 
   get queue(): readonly QueueItem[] {
     return this.items;
   }
 
+  get currentId(): string | null {
+    return this.currentItemId;
+  }
+
   get canGoNext(): boolean {
-    return this.items.length > 0;
+    return this.currentIndex >= 0 && this.currentIndex < this.items.length - 1;
   }
 
   get canGoPrevious(): boolean {
-    return this.history.length > 0;
+    return this.currentIndex > 0;
   }
 
-  replace(items: readonly QueueItem[]): void {
+  replace(items: readonly QueueItem[], currentId: string | null): void {
     this.items = items.map((item) => ({ ...item }));
+    this.currentItemId = this.items.some((item) => item.id === currentId) ? currentId : null;
     this.notify();
   }
 
@@ -35,8 +40,16 @@ export class PlaybackQueue {
     return item;
   }
 
+  setTitle(id: string, title: string): void {
+    const item = this.items.find((candidate) => candidate.id === id);
+    if (!item || item.title === title) return;
+    item.title = title;
+    this.notify();
+  }
+
   remove(id: string): void {
     this.items = this.items.filter((item) => item.id !== id);
+    if (this.currentItemId === id) this.currentItemId = null;
     this.notify();
   }
 
@@ -58,24 +71,26 @@ export class PlaybackQueue {
     this.notify();
   }
 
-  /** Dequeues the next track, pushing currentTrackId onto history for a later "previous". */
-  next(currentTrackId: string | null): string | null {
-    const nextItem = this.items.shift();
-    if (!nextItem) return null;
-    if (currentTrackId) {
-      this.history.push(currentTrackId);
-    }
+  select(id: string): string | null {
+    const item = this.items.find((candidate) => candidate.id === id);
+    if (!item) return null;
+    this.currentItemId = item.id;
     this.notify();
-    return nextItem.trackId;
+    return item.trackId;
   }
 
-  /** Pops the last played track from history, re-enqueuing currentTrackId at the front. */
-  previous(currentTrackId: string | null): string | null {
-    const prevTrackId = this.history.pop();
-    if (!prevTrackId) return null;
-    if (currentTrackId) this.items.unshift({ id: crypto.randomUUID(), trackId: currentTrackId });
-    this.notify();
-    return prevTrackId;
+  next(): string | null {
+    const currentIndex = this.currentIndex;
+    if (currentIndex === -1) return null;
+    const nextItem = this.items[currentIndex + 1];
+    return nextItem ? this.select(nextItem.id) : null;
+  }
+
+  previous(): string | null {
+    const currentIndex = this.currentIndex;
+    if (currentIndex <= 0) return null;
+    const previousItem = this.items[currentIndex - 1];
+    return previousItem ? this.select(previousItem.id) : null;
   }
 
   onChange(cb: () => void): void {
@@ -84,5 +99,9 @@ export class PlaybackQueue {
 
   private notify(): void {
     for (const listener of this.listeners) listener();
+  }
+
+  private get currentIndex(): number {
+    return this.currentItemId ? this.items.findIndex((item) => item.id === this.currentItemId) : -1;
   }
 }

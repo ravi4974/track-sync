@@ -70,6 +70,11 @@ export class PlaybackSyncService {
     await this.scheduleLocalCommand({ ...state, isPlaying: false });
   }
 
+  async seek(positionSec: number): Promise<void> {
+    const state = this.projectStateAt(this.provider.getState(), this.now());
+    await this.scheduleLocalCommand({ ...state, positionSec });
+  }
+
   async load(trackId: string, autoplay = true): Promise<void> {
     await this.scheduleLocalCommand({ trackId, isPlaying: autoplay, positionSec: 0, updatedAt: this.now() });
   }

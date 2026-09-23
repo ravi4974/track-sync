@@ -38,9 +38,10 @@ describe('QueueSyncService', () => {
     const link = new FakePeerLink('LOCAL1');
     new QueueSyncService(queue, link);
 
-    link.receive({ type: 'QUEUE_SNAPSHOT', senderId: 'REMOTE', seq: 1, ts: 100, payload: { updatedAt: 100, items: [{ id: 'item-a', trackId: 'track-a' }] } });
+    link.receive({ type: 'QUEUE_SNAPSHOT', senderId: 'REMOTE', seq: 1, ts: 100, payload: { updatedAt: 100, currentId: 'item-a', items: [{ id: 'item-a', trackId: 'track-a' }] } });
 
     expect(queue.queue).toEqual([{ id: 'item-a', trackId: 'track-a' }]);
+    expect(queue.currentId).toBe('item-a');
     expect(link.sent).toHaveLength(0);
   });
 
