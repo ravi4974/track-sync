@@ -23,6 +23,11 @@ export class PlaybackQueue {
     return this.history.length > 0;
   }
 
+  replace(items: readonly QueueItem[]): void {
+    this.items = items.map((item) => ({ ...item }));
+    this.notify();
+  }
+
   add(trackId: string, id: string = crypto.randomUUID(), title?: string): QueueItem {
     const item: QueueItem = { id, trackId, title };
     this.items.push(item);

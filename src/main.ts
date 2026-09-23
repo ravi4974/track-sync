@@ -5,6 +5,7 @@ import { PeerConnectionManager } from './sync/PeerConnectionManager.ts';
 import { ClockSync } from './sync/ClockSync.ts';
 import { PlaybackSyncService } from './sync/PlaybackSyncService.ts';
 import { LibrarySyncService } from './sync/LibrarySyncService.ts';
+import { QueueSyncService } from './sync/QueueSyncService.ts';
 import { LibraryStore } from './storage/LibraryStore.ts';
 import { PlaybackQueue, type QueueItem } from './queue/PlaybackQueue.ts';
 
@@ -179,6 +180,7 @@ function extractVideoId(input: string): string | null {
 }
 
 const playbackQueue = new PlaybackQueue();
+new QueueSyncService(playbackQueue, connection);
 let draggedQueueId: string | null = null;
 
 const queueList = document.querySelector<HTMLUListElement>('#queue-list')!;
@@ -219,15 +221,15 @@ document.querySelector('#queue-add-btn')!.addEventListener('click', async () => 
   const input = document.querySelector<HTMLInputElement>('#queue-input')!;
   const trackId = extractVideoId(input.value.trim());
   if (!trackId) return;
-  
-  // Load the video to fetch its title
-  await playbackSync.load(trackId);
-  
-  // Wait a moment for the title to be extracted
-  await new Promise(resolve => setTimeout(resolve, 600));
-  
-  const title = (provider as any).getVideoTitle?.();
-  playbackQueue.add(trackId, crypto.randomUUID(), title);
+
+  if (provider.getState().isPlaying) {
+    playbackQueue.add(trackId);
+  } else {
+    await playbackSync.load(trackId);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const title = (provider as any).getVideoTitle?.();
+    playbackQueue.add(trackId, crypto.randomUUID(), title);
+  }
   input.value = '';
 });
 
