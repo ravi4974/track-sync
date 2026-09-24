@@ -141,6 +141,7 @@ const seekTimeline = document.querySelector<HTMLDivElement>('#seek-timeline')!;
 const elapsedTime = document.querySelector<HTMLSpanElement>('#elapsed-time')!;
 const durationTime = document.querySelector<HTMLSpanElement>('#duration-time')!;
 let isSeeking = false;
+let scheduledStartAt: number | null = null;
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return '0:00';
@@ -161,6 +162,14 @@ function updateSeekControls(): void {
   seekTimeline.classList.toggle('playing', state.isPlaying && duration > 0);
   elapsedTime.textContent = formatTime(isSeeking ? Number(seekBar.value) : position);
   durationTime.textContent = formatTime(duration);
+  if (scheduledStartAt !== null) {
+    const remainingSec = Math.ceil((scheduledStartAt - Date.now()) / 1000);
+    if (remainingSec > 0) {
+      document.querySelector('#current-subtitle')!.textContent = `Starting in ${remainingSec}s`;
+    } else {
+      scheduledStartAt = null;
+    }
+  }
 }
 
 seekBar.addEventListener('pointerdown', () => { isSeeking = true; });
@@ -173,6 +182,10 @@ seekBar.addEventListener('change', () => {
   void playbackSync.seek(Number(seekBar.value));
 });
 setInterval(updateSeekControls, 250);
+playbackSync.onScheduledStart((executeAt) => {
+  scheduledStartAt = executeAt;
+  updateSeekControls();
+});
 
 playPauseBtn.addEventListener('click', () => {
   if (provider.getState().isPlaying) void playbackSync.pause();

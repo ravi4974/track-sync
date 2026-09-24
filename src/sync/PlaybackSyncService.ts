@@ -4,9 +4,10 @@ import type { ClockSync } from './ClockSync.ts';
 import type { PlaybackCommand } from './protocol.ts';
 import { nextSeq } from './protocol.ts';
 
+const MIN_COMMAND_LEAD_MS = 3_000;
+const COMMAND_SAFETY_MARGIN_MS = 1_000;
 const BROADCAST_POSITION_EPSILON_SEC = 0.5;
 const MAX_SEEK_ATTEMPTS = 5;
-const COMMAND_LEAD_MS = 1_500;
 const HOLD_FOR_CATCH_UP_DRIFT_SEC = 0.1;
 const RESUME_POSITION_TOLERANCE_SEC = 0.005;
 
@@ -25,6 +26,7 @@ export class PlaybackSyncService {
   private commandRevision = 0;
   private isConnected = false;
   private catchUpHold: CatchUpHold | null = null;
+  private scheduleListeners: Array<(executeAt: number) => void> = [];
   private readonly provider: MediaProvider;
   private readonly connection: PeerLink;
   private readonly clockSync?: ClockSync;
@@ -52,6 +54,9 @@ export class PlaybackSyncService {
         const lastRevision = this.lastCommandRevisionBySender.get(message.senderId);
         if (lastRevision !== undefined && message.payload.revision <= lastRevision) return;
         this.lastCommandRevisionBySender.set(message.senderId, message.payload.revision);
+        if (message.payload.state.isPlaying) {
+          for (const listener of this.scheduleListeners) listener(message.payload.executeAt);
+        }
         this.remoteApplyQueue = this.remoteApplyQueue.then(() => this.applyScheduledCommand(message.payload, message.senderId));
       }
     });
@@ -62,30 +67,44 @@ export class PlaybackSyncService {
 
   async play(): Promise<void> {
     const state = this.projectStateAt(this.provider.getState(), this.now());
-    await this.scheduleLocalCommand({ ...state, isPlaying: true });
+    await this.scheduleLocalCommand({ ...state, isPlaying: true }, true);
   }
 
   async pause(): Promise<void> {
     const state = this.projectStateAt(this.provider.getState(), this.now());
-    await this.scheduleLocalCommand({ ...state, isPlaying: false });
+    await this.scheduleLocalCommand({ ...state, isPlaying: false }, true, false);
   }
 
   async seek(positionSec: number): Promise<void> {
     const state = this.projectStateAt(this.provider.getState(), this.now());
-    await this.scheduleLocalCommand({ ...state, positionSec });
+    await this.scheduleLocalCommand({ ...state, positionSec }, false);
   }
 
   async load(trackId: string, autoplay = true): Promise<void> {
-    await this.scheduleLocalCommand({ trackId, isPlaying: autoplay, positionSec: 0, updatedAt: this.now() });
+    await this.scheduleLocalCommand({ trackId, isPlaying: autoplay, positionSec: 0, updatedAt: this.now() }, false);
   }
 
-  private async scheduleLocalCommand(state: PlaybackState): Promise<void> {
-    const executeAt = this.now() + (this.isConnected ? COMMAND_LEAD_MS : 0);
+  onScheduledStart(cb: (executeAt: number) => void): void {
+    this.scheduleListeners.push(cb);
+  }
+
+  private async scheduleLocalCommand(
+    state: PlaybackState,
+    projectPositionToStart: boolean,
+    scheduleForFuture = true,
+  ): Promise<void> {
+    const executeAt = this.now() + (scheduleForFuture ? this.getCommandLeadMs() : 0);
+    const scheduledState = projectPositionToStart
+      ? this.projectStateAt(state, executeAt)
+      : { ...state, updatedAt: executeAt };
     const command: PlaybackCommand = {
       revision: ++this.commandRevision,
       executeAt,
-      state: { ...state, updatedAt: executeAt },
+      state: { ...scheduledState, updatedAt: executeAt },
     };
+    if (command.state.isPlaying) {
+      for (const listener of this.scheduleListeners) listener(executeAt);
+    }
     this.connection.broadcast({
       type: 'PLAYBACK_COMMAND',
       senderId: this.connection.localId,
@@ -94,6 +113,12 @@ export class PlaybackSyncService {
       payload: command,
     });
     await this.applyScheduledCommand(command, this.connection.localId);
+  }
+
+  private getCommandLeadMs(): number {
+    if (!this.isConnected) return 0;
+    const measuredRttMs = this.clockSync?.getRttMs() ?? 0;
+    return Math.max(MIN_COMMAND_LEAD_MS, measuredRttMs + COMMAND_SAFETY_MARGIN_MS);
   }
 
   private broadcastLocalState(state: PlaybackState): void {
@@ -134,6 +159,7 @@ export class PlaybackSyncService {
       const local = this.provider.getState();
       if (remote.trackId && remote.trackId !== local.trackId) {
         await this.provider.load(remote.trackId, false);
+        await this.provider.waitUntilReady?.();
       }
       await this.syncPosition(remote, senderId);
       if (remote.isPlaying && !this.provider.getState().isPlaying) {
@@ -165,12 +191,12 @@ export class PlaybackSyncService {
       if (!local.isPlaying) return;
       const driftSec = local.positionSec - remotePosition;
       if (driftSec < HOLD_FOR_CATCH_UP_DRIFT_SEC) return;
-      await this.provider.pause();
       this.catchUpHold = {
         senderId,
         trackId: remote.trackId,
-        resumeAtPositionSec: this.provider.getState().positionSec,
+        resumeAtPositionSec: local.positionSec,
       };
+      await this.provider.pause();
     } finally {
       this.applyingRemote = false;
     }
@@ -185,6 +211,7 @@ export class PlaybackSyncService {
       const local = this.provider.getState();
       if (remote.trackId && remote.trackId !== local.trackId) {
         await this.provider.load(remote.trackId, false);
+        await this.provider.waitUntilReady?.();
       }
       await this.syncPosition(remote, senderId);
       await this.waitUntil(executeAtLocal);

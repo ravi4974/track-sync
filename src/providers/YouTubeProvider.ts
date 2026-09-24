@@ -144,6 +144,11 @@ export class YouTubeProvider implements MediaProvider {
     this.updateState({ trackId, positionSec: 0 });
   }
 
+  async waitUntilReady(): Promise<void> {
+    await this.ready;
+    await this.waitForPlayerState(window.YT!.PlayerState.CUED);
+  }
+
   private extractVideoTitle(): string | null {
     if (!this.player) return null;
     

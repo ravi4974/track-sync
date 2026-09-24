@@ -10,6 +10,7 @@ export interface PlaybackState {
 
 export interface MediaProvider {
   load(trackId: string, autoplay?: boolean): Promise<void>;
+  waitUntilReady?(): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   seek(seconds: number): Promise<void>;

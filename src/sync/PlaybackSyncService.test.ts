@@ -6,6 +6,7 @@ import { PlaybackSyncService } from './PlaybackSyncService.ts';
 
 class FakeProvider implements MediaProvider {
   state: PlaybackState = { trackId: null, isPlaying: false, positionSec: 0, updatedAt: Date.now() };
+  deferPauseEmit = false;
   private listeners: Array<(state: PlaybackState) => void> = [];
   private positionSampleListeners: Array<(state: PlaybackState) => void> = [];
 
@@ -21,7 +22,11 @@ class FakeProvider implements MediaProvider {
 
   async pause(): Promise<void> {
     this.state = { ...this.state, isPlaying: false, updatedAt: Date.now() };
-    this.emit();
+    if (this.deferPauseEmit) {
+      setTimeout(() => this.emit(), 0);
+    } else {
+      this.emit();
+    }
   }
 
   async seek(seconds: number): Promise<void> {
@@ -233,6 +238,7 @@ describe('PlaybackSyncService', () => {
     const timestamp = Date.now();
     const provider = new FakeProvider();
     provider.state = { trackId: 'abc12345678', isPlaying: true, positionSec: 10.3, updatedAt: timestamp };
+    provider.deferPauseEmit = true;
     const link = new FakePeerLink();
     new PlaybackSyncService(provider, link);
     const pause = vi.spyOn(provider, 'pause');
@@ -261,6 +267,26 @@ describe('PlaybackSyncService', () => {
 
     expect(play).toHaveBeenCalledOnce();
     expect(provider.getState().isPlaying).toBe(true);
+  });
+
+  it('does not broadcast the temporary catch-up pause', async () => {
+    const timestamp = Date.now();
+    const provider = new FakeProvider();
+    provider.state = { trackId: 'abc12345678', isPlaying: true, positionSec: 10.3, updatedAt: timestamp };
+    const link = new FakePeerLink();
+    new PlaybackSyncService(provider, link);
+
+    link.simulateIncoming({
+      type: 'PLAYBACK_PROBE',
+      senderId: 'REMOTE',
+      seq: 1,
+      ts: timestamp,
+      payload: { trackId: 'abc12345678', isPlaying: true, positionSec: 10, updatedAt: timestamp },
+    });
+    await flush();
+    await flush();
+
+    expect(link.sent).toHaveLength(0);
   });
 
   it('broadcasts periodic position samples as probes', () => {
