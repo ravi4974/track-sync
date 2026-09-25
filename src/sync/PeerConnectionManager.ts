@@ -49,6 +49,18 @@ export class PeerConnectionManager implements PeerLink {
     this.attachConnection(conn);
   }
 
+  disconnectFrom(peerId: string): void {
+    const conn = this.connections.get(peerId);
+    if (!conn) return;
+    conn.close();
+    this.connections.delete(peerId);
+    this.emitStatus(this.connections.size === 0 ? 'idle' : 'connected');
+  }
+
+  getConnectedPeerIds(): string[] {
+    return [...this.connections.keys()];
+  }
+
   private attachConnection(conn: DataConnection): void {
     conn.on('open', () => {
       this.connections.set(conn.peer, conn);

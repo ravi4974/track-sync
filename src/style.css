@@ -33,6 +33,17 @@ button { border: 0; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #eab650; box-shadow: 0 0 0 3px #f8e8bf; }
 .connect-form { display: flex; gap: 6px; }
 
+.leader-status { font-weight: 700; white-space: nowrap; }
+.dnd-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
+#leader-timeout-input { width: 52px; padding: 6px 8px; font-size: .75rem; }
+#become-leader-btn:disabled, #sync-btn:disabled { opacity: .35; cursor: default; }
+
+.leader-approval-banner { position: fixed; top: 16px; left: 50%; transform: translate(-50%, -12px); z-index: 40; display: none; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: #18231b; color: #fff; font-size: .8rem; font-weight: 700; box-shadow: 0 12px 30px #18231b33; opacity: 0; transition: opacity .2s, transform .2s; }
+.leader-approval-banner.visible { display: flex; opacity: 1; transform: translate(-50%, 0); }
+.approval-countdown { font-variant-numeric: tabular-nums; color: #eab650; }
+.leader-approval-banner .icon-btn { width: 30px; height: 30px; color: #fff; }
+.leader-approval-banner .icon-btn:hover { background: #2c3a2e; color: #fff; }
+
 input { border: 1px solid #d7dfd8; border-radius: 6px; background: #fff; color: #1d2620; outline: none; transition: border-color .18s, box-shadow .18s; }
 input:focus { border-color: #608f6c; box-shadow: 0 0 0 3px #dcebdd; }
 #remote-code { width: 144px; padding: 9px 11px; font-size: .8rem; }

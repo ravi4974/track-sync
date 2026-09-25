@@ -1,15 +1,16 @@
 import './style.css';
-import { Check, createIcons, Heart, History, Link2, ListMusic, Pause, Play, Plus, Shuffle, SkipBack, SkipForward, X } from 'lucide';
+import { Check, Crown, createIcons, Heart, History, Link2, ListMusic, Pause, Play, Plus, RefreshCw, Shuffle, SkipBack, SkipForward, X } from 'lucide';
 import { YouTubeProvider } from './providers/YouTubeProvider.ts';
 import { PeerConnectionManager } from './sync/PeerConnectionManager.ts';
 import { ClockSync } from './sync/ClockSync.ts';
+import { LeadershipService } from './sync/LeadershipService.ts';
 import { PlaybackSyncService } from './sync/PlaybackSyncService.ts';
 import { LibrarySyncService } from './sync/LibrarySyncService.ts';
 import { QueueSyncService } from './sync/QueueSyncService.ts';
 import { LibraryStore } from './storage/LibraryStore.ts';
 import { PlaybackQueue, type QueueItem } from './queue/PlaybackQueue.ts';
 
-const playerIcons = { Check, Heart, History, Link2, ListMusic, Pause, Play, Plus, Shuffle, SkipBack, SkipForward, X };
+const playerIcons = { Check, Crown, Heart, History, Link2, ListMusic, Pause, Play, Plus, RefreshCw, Shuffle, SkipBack, SkipForward, X };
 const ROOM_CODE_STORAGE_KEY = 'track-sync-room-code';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -30,8 +31,20 @@ app.innerHTML = `
           <input id="remote-code" placeholder="Enter room code" maxlength="6" aria-label="Peer room code" />
           <button id="connect-btn" class="icon-btn connect-btn" title="Connect to room" aria-label="Connect to room"><i data-lucide="link-2"></i></button>
         </div>
+        <span id="leader-status" class="leader-status"></span>
+        <button id="become-leader-btn" class="icon-btn" title="Become leader" aria-label="Become leader"><i data-lucide="crown"></i></button>
+        <label class="dnd-toggle" title="Auto-deny leadership requests">
+          <input id="dnd-toggle" type="checkbox" /> DND
+        </label>
+        <input id="leader-timeout-input" type="number" min="1" value="10" title="Leadership approval timeout (seconds)" aria-label="Leadership approval timeout in seconds" />
       </section>
     </header>
+    <div id="leader-approval-banner" class="leader-approval-banner">
+      <span id="approval-text"></span>
+      <span id="approval-countdown" class="approval-countdown"></span>
+      <button id="approve-btn" class="icon-btn" title="Approve" aria-label="Approve"><i data-lucide="check"></i></button>
+      <button id="deny-btn" class="icon-btn" title="Deny" aria-label="Deny"><i data-lucide="x"></i></button>
+    </div>
     <div id="content-grid">
       <main id="main-column">
         <section id="player-section">
@@ -60,6 +73,7 @@ app.innerHTML = `
             <button id="play-pause-btn" class="icon-btn play-btn" aria-label="Play"><i data-lucide="play"></i></button>
             <button id="next-btn" class="icon-btn" title="Next" aria-label="Next"><i data-lucide="skip-forward"></i></button>
           </div>
+          <button id="sync-btn" class="icon-btn" title="Sync with leader" aria-label="Sync with leader"><i data-lucide="refresh-cw"></i></button>
           <button id="queue-toggle-btn" class="icon-btn queue-toggle" aria-expanded="false" title="Queue" aria-label="Toggle queue"><i data-lucide="list-music"></i><span>Queue</span></button>
         </div>
       </section>
@@ -98,7 +112,8 @@ const savedRoomCode = sessionStorage.getItem(ROOM_CODE_STORAGE_KEY) ?? undefined
 const connection = new PeerConnectionManager(savedRoomCode);
 const store = new LibraryStore();
 const clockSync = new ClockSync(connection);
-const playbackSync = new PlaybackSyncService(provider, connection, clockSync);
+const leadership = new LeadershipService(connection);
+const playbackSync = new PlaybackSyncService(provider, connection, clockSync, Date.now, leadership);
 const librarySync = new LibrarySyncService(store, connection);
 
 const localCodeInput = document.querySelector<HTMLInputElement>('#local-code-input')!;
@@ -123,16 +138,80 @@ connection.onStatusChange((status) => {
 });
 const notification = document.querySelector<HTMLDivElement>('#notification')!;
 let notificationTimeout: ReturnType<typeof setTimeout> | null = null;
-connection.onPeerDisconnected(({ peerId, allDisconnected }) => {
-  notification.textContent = `${peerId} disconnected${allDisconnected ? '. Room is now idle.' : '.'}`;
+function showNotification(text: string): void {
+  notification.textContent = text;
   notification.classList.add('visible');
   if (notificationTimeout) clearTimeout(notificationTimeout);
   notificationTimeout = setTimeout(() => notification.classList.remove('visible'), 4_000);
+}
+connection.onPeerDisconnected(({ peerId, allDisconnected }) => {
+  showNotification(`${peerId} disconnected${allDisconnected ? '. Room is now idle.' : '.'}`);
 });
 
 document.querySelector('#connect-btn')!.addEventListener('click', () => {
   const remoteInput = document.querySelector<HTMLInputElement>('#remote-code')!;
-  if (remoteInput.value.trim()) connection.connectTo(remoteInput.value);
+  if (remoteInput.value.trim()) {
+    connection.connectTo(remoteInput.value);
+    leadership.joinLeader(remoteInput.value);
+  }
+});
+
+const leaderStatusEl = document.querySelector<HTMLSpanElement>('#leader-status')!;
+const becomeLeaderBtn = document.querySelector<HTMLButtonElement>('#become-leader-btn')!;
+const syncBtn = document.querySelector<HTMLButtonElement>('#sync-btn')!;
+const dndToggle = document.querySelector<HTMLInputElement>('#dnd-toggle')!;
+const leaderTimeoutInput = document.querySelector<HTMLInputElement>('#leader-timeout-input')!;
+const approvalBanner = document.querySelector<HTMLDivElement>('#leader-approval-banner')!;
+const approvalText = document.querySelector<HTMLSpanElement>('#approval-text')!;
+const approvalCountdown = document.querySelector<HTMLSpanElement>('#approval-countdown')!;
+let approvalCountdownHandle: ReturnType<typeof setInterval> | null = null;
+
+function updateLeadershipUi(): void {
+  const isLeader = leadership.isLeader();
+  leaderStatusEl.textContent = isLeader ? 'Leading' : `Following ${leadership.getLeaderId()}`;
+  becomeLeaderBtn.disabled = isLeader;
+  syncBtn.disabled = isLeader;
+  renderQueue();
+  updateSeekControls();
+}
+
+leadership.onLeaderChange(() => updateLeadershipUi());
+
+becomeLeaderBtn.addEventListener('click', () => {
+  leadership.requestLeadership();
+  showNotification('Leadership request sent.');
+});
+
+syncBtn.addEventListener('click', () => void playbackSync.sync());
+
+dndToggle.addEventListener('change', () => leadership.setDoNotDisturb(dndToggle.checked));
+leaderTimeoutInput.addEventListener('change', () => {
+  const seconds = Number(leaderTimeoutInput.value);
+  if (Number.isFinite(seconds) && seconds > 0) leadership.setRequestTimeoutSec(seconds);
+});
+
+leadership.onIncomingRequest((request) => {
+  approvalText.textContent = `${request.requesterId} wants to become the leader.`;
+  approvalBanner.classList.add('visible');
+  const tickCountdown = () => {
+    approvalCountdown.textContent = `${Math.max(0, Math.ceil((request.deadline - Date.now()) / 1000))}s`;
+  };
+  tickCountdown();
+  approvalCountdownHandle = setInterval(tickCountdown, 250);
+});
+leadership.onIncomingRequestCleared(() => {
+  approvalBanner.classList.remove('visible');
+  if (approvalCountdownHandle) clearInterval(approvalCountdownHandle);
+  approvalCountdownHandle = null;
+});
+document.querySelector('#approve-btn')!.addEventListener('click', () => leadership.approveIncomingRequest());
+document.querySelector('#deny-btn')!.addEventListener('click', () => leadership.denyIncomingRequest());
+
+leadership.onRequestResolved((outcome) => {
+  showNotification(
+    outcome === 'approved' ? 'You are now the leader.' : outcome === 'denied' ? 'Leadership request denied.' : 'Leadership request timed out.',
+  );
+  updateLeadershipUi();
 });
 
 const playPauseBtn = document.querySelector<HTMLButtonElement>('#play-pause-btn')!;
@@ -156,7 +235,7 @@ function updateSeekControls(): void {
   const position = Math.min(Math.max(elapsed, 0), duration || elapsed);
   const progress = duration > 0 ? (position / duration) * 100 : 0;
   seekBar.max = String(duration);
-  seekBar.disabled = duration <= 0;
+  seekBar.disabled = duration <= 0 || !leadership.isLeader();
   if (!isSeeking) seekBar.value = String(position);
   seekTimeline.style.setProperty('--progress', `${progress}%`);
   seekTimeline.classList.toggle('playing', state.isPlaying && duration > 0);
@@ -224,6 +303,7 @@ document.querySelector('#favorite-btn')!.addEventListener('click', async () => {
 
 for (const listId of ['favorites-list', 'history-list']) {
   document.querySelector(`#${listId}`)!.addEventListener('click', (event) => {
+    if (!leadership.isLeader()) return;
     const trackId = (event.target as HTMLElement).dataset.track;
     if (trackId) void playbackSync.load(trackId);
   });
@@ -272,18 +352,20 @@ function renderQueue(): void {
         </li>`,
     )
     .join('');
-  prevBtn.disabled = !playbackQueue.canGoPrevious;
-  nextBtn.disabled = !playbackQueue.canGoNext;
+  prevBtn.disabled = !leadership.isLeader() || !playbackQueue.canGoPrevious;
+  nextBtn.disabled = !leadership.isLeader() || !playbackQueue.canGoNext;
 }
 
 playbackQueue.onChange(renderQueue);
 
 prevBtn.addEventListener('click', () => {
+  if (!leadership.isLeader()) return;
   const prevTrackId = playbackQueue.previous();
   if (prevTrackId) void playbackSync.load(prevTrackId);
 });
 
 nextBtn.addEventListener('click', () => {
+  if (!leadership.isLeader()) return;
   const nextTrackId = playbackQueue.next();
   if (nextTrackId) void playbackSync.load(nextTrackId);
 });
@@ -316,7 +398,7 @@ queueList.addEventListener('click', (event) => {
     return;
   }
   const itemId = target.closest<HTMLLIElement>('li')?.dataset.id;
-  if (itemId) {
+  if (itemId && leadership.isLeader()) {
     const trackId = playbackQueue.select(itemId);
     if (trackId) void playbackSync.load(trackId);
   }
@@ -344,6 +426,7 @@ queueList.addEventListener('drop', (event) => {
 });
 
 renderQueue();
+updateLeadershipUi();
 
 async function renderLibrary(): Promise<void> {
   const items = await store.getAll();

@@ -6,7 +6,6 @@ import { PlaybackSyncService } from './PlaybackSyncService.ts';
 
 class FakeProvider implements MediaProvider {
   state: PlaybackState = { trackId: null, isPlaying: false, positionSec: 0, updatedAt: Date.now() };
-  deferPauseEmit = false;
   private listeners: Array<(state: PlaybackState) => void> = [];
   private positionSampleListeners: Array<(state: PlaybackState) => void> = [];
 
@@ -22,11 +21,7 @@ class FakeProvider implements MediaProvider {
 
   async pause(): Promise<void> {
     this.state = { ...this.state, isPlaying: false, updatedAt: Date.now() };
-    if (this.deferPauseEmit) {
-      setTimeout(() => this.emit(), 0);
-    } else {
-      this.emit();
-    }
+    this.emit();
   }
 
   async seek(seconds: number): Promise<void> {
@@ -234,42 +229,37 @@ describe('PlaybackSyncService', () => {
     expect(provider.getState().positionSec).toBe(42);
   });
 
-  it('pauses the leading player and resumes when the remote position catches up', async () => {
+  it('seeks toward the leader stream without pausing to wait, when ahead', async () => {
     const timestamp = Date.now();
     const provider = new FakeProvider();
-    provider.state = { trackId: 'abc12345678', isPlaying: true, positionSec: 10.3, updatedAt: timestamp };
-    provider.deferPauseEmit = true;
+    provider.state = { trackId: 'abc12345678', isPlaying: true, positionSec: 11, updatedAt: timestamp };
     const link = new FakePeerLink();
     new PlaybackSyncService(provider, link);
     const pause = vi.spyOn(provider, 'pause');
-    const play = vi.spyOn(provider, 'play');
+    const seek = vi.spyOn(provider, 'seek');
 
     link.simulateIncoming({
-      type: 'PLAYBACK_PROBE',
+      type: 'PLAYBACK_STREAM',
       senderId: 'REMOTE',
       seq: 1,
       ts: timestamp,
-      payload: { trackId: 'abc12345678', isPlaying: true, positionSec: 10, updatedAt: timestamp },
+      payload: {
+        trackId: 'abc12345678',
+        isPlaying: true,
+        currentPositionSec: 10,
+        currentTs: timestamp,
+        futurePositionSec: 12,
+        futureTs: timestamp + 2000,
+      },
     });
     await flush();
 
-    expect(pause).toHaveBeenCalledOnce();
-    expect(provider.getState().isPlaying).toBe(false);
-
-    link.simulateIncoming({
-      type: 'PLAYBACK_PROBE',
-      senderId: 'REMOTE',
-      seq: 2,
-      ts: timestamp,
-      payload: { trackId: 'abc12345678', isPlaying: true, positionSec: 10.3, updatedAt: timestamp },
-    });
-    await flush();
-
-    expect(play).toHaveBeenCalledOnce();
+    expect(pause).not.toHaveBeenCalled();
+    expect(seek).toHaveBeenCalled();
     expect(provider.getState().isPlaying).toBe(true);
   });
 
-  it('does not broadcast the temporary catch-up pause', async () => {
+  it('does not broadcast when reconciling to a leader stream', async () => {
     const timestamp = Date.now();
     const provider = new FakeProvider();
     provider.state = { trackId: 'abc12345678', isPlaying: true, positionSec: 10.3, updatedAt: timestamp };
@@ -277,11 +267,18 @@ describe('PlaybackSyncService', () => {
     new PlaybackSyncService(provider, link);
 
     link.simulateIncoming({
-      type: 'PLAYBACK_PROBE',
+      type: 'PLAYBACK_STREAM',
       senderId: 'REMOTE',
       seq: 1,
       ts: timestamp,
-      payload: { trackId: 'abc12345678', isPlaying: true, positionSec: 10, updatedAt: timestamp },
+      payload: {
+        trackId: 'abc12345678',
+        isPlaying: true,
+        currentPositionSec: 10,
+        currentTs: timestamp,
+        futurePositionSec: 12,
+        futureTs: timestamp + 2000,
+      },
     });
     await flush();
     await flush();
@@ -289,7 +286,7 @@ describe('PlaybackSyncService', () => {
     expect(link.sent).toHaveLength(0);
   });
 
-  it('broadcasts periodic position samples as probes', () => {
+  it('broadcasts periodic position samples as a leader stream', () => {
     const provider = new FakeProvider();
     provider.state = { ...provider.state, isPlaying: true };
     const link = new FakePeerLink();
@@ -298,7 +295,7 @@ describe('PlaybackSyncService', () => {
     provider.emitPositionSample();
 
     expect(link.sent).toHaveLength(1);
-    expect(link.sent[0]).toMatchObject({ type: 'PLAYBACK_PROBE' });
+    expect(link.sent[0]).toMatchObject({ type: 'PLAYBACK_STREAM' });
   });
 
   it('re-syncs position after play() to compensate for buffering/loading delay', async () => {
@@ -431,4 +428,96 @@ describe('PlaybackSyncService', () => {
 
     expect(link.sent).toHaveLength(1);
   });
+
+  describe('leader gating', () => {
+    class FakeLeadership {
+      leader = false;
+      leaderId = 'REMOTE';
+      isLeader(): boolean {
+        return this.leader;
+      }
+      getLeaderId(): string {
+        return this.leaderId;
+      }
+    }
+
+    it('does not broadcast a command when the local peer is not the leader', async () => {
+      const provider = new FakeProvider();
+      const link = new FakePeerLink();
+      const leadership = new FakeLeadership();
+      const service = new PlaybackSyncService(provider, link, undefined, Date.now, leadership);
+
+      await service.play();
+
+      expect(link.sent).toHaveLength(0);
+      expect(provider.getState().isPlaying).toBe(true);
+    });
+
+    it('ignores next/previous (load) from a non-leader', async () => {
+      const provider = new FakeProvider();
+      const link = new FakePeerLink();
+      const leadership = new FakeLeadership();
+      const service = new PlaybackSyncService(provider, link, undefined, Date.now, leadership);
+
+      await service.load('abc12345678');
+
+      expect(link.sent).toHaveLength(0);
+      expect(provider.getState().trackId).toBeNull();
+    });
+
+    it('ignores playback messages from a peer that is not the current leader', async () => {
+      const provider = new FakeProvider();
+      const link = new FakePeerLink();
+      const leadership = new FakeLeadership();
+      leadership.leaderId = 'REMOTE';
+      new PlaybackSyncService(provider, link, undefined, Date.now, leadership);
+
+      link.simulateIncoming({
+        type: 'PLAYBACK_STATE',
+        senderId: 'IMPOSTOR',
+        seq: 1,
+        ts: Date.now(),
+        payload: { trackId: 'abc12345678', isPlaying: true, positionSec: 10, updatedAt: Date.now() },
+      });
+      await flush();
+
+      expect(provider.getState().trackId).toBeNull();
+    });
+
+    it('sync() re-arms following and snaps to the latest leader stream', async () => {
+      const timestamp = Date.now();
+      const provider = new FakeProvider();
+      provider.state = { trackId: 'abc12345678', isPlaying: true, positionSec: 0, updatedAt: timestamp };
+      const link = new FakePeerLink();
+      const leadership = new FakeLeadership();
+      leadership.leaderId = 'REMOTE';
+      const service = new PlaybackSyncService(provider, link, undefined, Date.now, leadership);
+
+      link.simulateIncoming({
+        type: 'PLAYBACK_STREAM',
+        senderId: 'REMOTE',
+        seq: 1,
+        ts: timestamp,
+        payload: {
+          trackId: 'abc12345678',
+          isPlaying: true,
+          currentPositionSec: 10,
+          currentTs: timestamp,
+          futurePositionSec: 12,
+          futureTs: timestamp + 2000,
+        },
+      });
+      await flush();
+
+      // Diverge locally (peer's own play/pause is local-only and stops following the leader).
+      await service.pause();
+      expect(provider.getState().isPlaying).toBe(false);
+
+      await service.sync();
+
+      expect(provider.getState().isPlaying).toBe(true);
+      expect(provider.getState().positionSec).toBeCloseTo(10, 0);
+    });
+  });
 });
+
