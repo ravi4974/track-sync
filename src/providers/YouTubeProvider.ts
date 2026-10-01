@@ -45,6 +45,8 @@ export class YouTubeProvider implements MediaProvider {
   private readonly ready: Promise<void>;
   private readonly elementId: string;
   private currentTitle: string | null = null;
+  private requestedTrackId: string | null = null;
+  private mutedForAd = false;
 
   constructor(elementId: string) {
     this.elementId = elementId;
@@ -70,6 +72,7 @@ export class YouTubeProvider implements MediaProvider {
 
   private handlePlayerStateChange(data: number): void {
     const PlayerState = window.YT!.PlayerState;
+    this.syncAdMute();
     if (data === PlayerState.PLAYING) {
       this.startHeartbeat();
       this.updateState({ isPlaying: true });
@@ -95,6 +98,7 @@ export class YouTubeProvider implements MediaProvider {
   // Detects seeks made via the player's own scrubber, which fire no dedicated event.
   private checkDrift(): void {
     if (!this.player || !this.state.isPlaying) return;
+    this.syncAdMute();
     const elapsedSec = (Date.now() - this.state.updatedAt) / 1000;
     const predicted = this.state.positionSec + elapsedSec;
     const actual = this.player.getCurrentTime();
@@ -108,7 +112,7 @@ export class YouTubeProvider implements MediaProvider {
     const previous = this.state;
     const playerPositionSec = this.player.getCurrentTime();
     const next: PlaybackState = {
-      trackId: this.player.getVideoData()?.video_id ?? previous.trackId,
+      trackId: this.requestedTrackId ?? previous.trackId,
       title: this.currentTitle ?? previous.title,
       isPlaying: previous.isPlaying,
       positionSec: Number.isFinite(playerPositionSec) ? playerPositionSec : previous.positionSec,
@@ -125,6 +129,19 @@ export class YouTubeProvider implements MediaProvider {
     }
   }
 
+  private syncAdMute(): void {
+    if (!this.player || !this.requestedTrackId) return;
+    const activeTrackId = this.player.getVideoData()?.video_id;
+    const isAdPlaying = Boolean(activeTrackId && activeTrackId !== this.requestedTrackId);
+    if (isAdPlaying && !this.player.isMuted()) {
+      this.player.mute();
+      this.mutedForAd = true;
+    } else if (!isAdPlaying && this.mutedForAd) {
+      this.player.unMute();
+      this.mutedForAd = false;
+    }
+  }
+
   private hasMeaningfulChange(previous: PlaybackState, next: PlaybackState): boolean {
     if (previous.trackId !== next.trackId || previous.isPlaying !== next.isPlaying) return true;
     const elapsedMSec = previous.isPlaying ? (next.updatedAt - previous.updatedAt): 0;
@@ -134,12 +151,16 @@ export class YouTubeProvider implements MediaProvider {
 
   async load(trackId: string, autoplay = true): Promise<void> {
     await this.ready;
+    this.requestedTrackId = trackId;
+    this.mutedForAd = false;
     if (autoplay) this.player!.loadVideoById(trackId);
     else this.player!.cueVideoById(trackId);
     this.currentTitle = null;
-    // Attempt to extract title after a short delay to allow video metadata to load
     setTimeout(() => {
-      this.currentTitle = this.extractVideoTitle();
+      const title = this.extractVideoTitle();
+      if (!title) return;
+      this.currentTitle = title;
+      this.updateState({ title });
     }, 500);
     this.updateState({ trackId, positionSec: 0 });
   }
@@ -151,19 +172,18 @@ export class YouTubeProvider implements MediaProvider {
 
   private extractVideoTitle(): string | null {
     if (!this.player) return null;
-    
-    // Try to get title from the iframe's document
+    const title = this.player.getVideoData()?.title;
+    if (title?.trim()) return title.trim();
+
     try {
       const iframe = document.querySelector<HTMLIFrameElement>(`iframe[src*="youtube.com/embed"]`);
       if (iframe?.title) {
-        // Clean up the title by removing the " - YouTube" suffix if present
         return iframe.title.replace(/ - YouTube$/, '');
       }
     } catch {
-      // Ignore errors when accessing iframe
+      return null;
     }
 
-    // Extract title from the page title (format: "Video Title - YouTube")
     const pageTitle = document.title;
     if (pageTitle && pageTitle !== 'YouTube') {
       return pageTitle.replace(/ - YouTube$/, '');
