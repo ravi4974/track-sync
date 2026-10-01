@@ -1,16 +1,15 @@
 import './style.css';
-import { Check, Crown, createIcons, Heart, History, Link2, ListMusic, Pause, Play, Plus, RefreshCw, Shuffle, SkipBack, SkipForward, X } from 'lucide';
+import { Check, Crown, createIcons, Heart, History, Link2, ListMusic, Pause, Play, Plus, RefreshCw, Shuffle, SkipBack, SkipForward, Trash2, X } from 'lucide';
 import { YouTubeProvider } from './providers/YouTubeProvider.ts';
 import { PeerConnectionManager } from './sync/PeerConnectionManager.ts';
 import { ClockSync } from './sync/ClockSync.ts';
 import { LeadershipService } from './sync/LeadershipService.ts';
 import { PlaybackSyncService } from './sync/PlaybackSyncService.ts';
-import { LibrarySyncService } from './sync/LibrarySyncService.ts';
 import { QueueSyncService } from './sync/QueueSyncService.ts';
 import { LibraryStore } from './storage/LibraryStore.ts';
 import { PlaybackQueue, type QueueItem } from './queue/PlaybackQueue.ts';
 
-const playerIcons = { Check, Crown, Heart, History, Link2, ListMusic, Pause, Play, Plus, RefreshCw, Shuffle, SkipBack, SkipForward, X };
+const playerIcons = { Check, Crown, Heart, History, Link2, ListMusic, Pause, Play, Plus, RefreshCw, Shuffle, SkipBack, SkipForward, Trash2, X };
 const ROOM_CODE_STORAGE_KEY = 'track-sync-room-code';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -79,11 +78,11 @@ app.innerHTML = `
       </section>
       <section id="library">
         <div class="library-group">
-          <div class="section-heading"><i data-lucide="heart"></i><h2>Favorites</h2></div>
+          <div class="section-heading"><span class="section-title"><i data-lucide="heart"></i><h2>Favorites</h2></span><button id="clear-favorites-btn" class="icon-btn clear-library-btn" title="Clear favorites" aria-label="Clear favorites"><i data-lucide="trash-2"></i></button></div>
           <ul id="favorites-list"></ul>
         </div>
         <div class="library-group">
-          <div class="section-heading"><i data-lucide="history"></i><h2>History</h2></div>
+          <div class="section-heading"><span class="section-title"><i data-lucide="history"></i><h2>History</h2></span><button id="clear-history-btn" class="icon-btn clear-library-btn" title="Clear history" aria-label="Clear history"><i data-lucide="trash-2"></i></button></div>
           <ul id="history-list"></ul>
         </div>
       </section>
@@ -114,7 +113,6 @@ const store = new LibraryStore();
 const clockSync = new ClockSync(connection);
 const leadership = new LeadershipService(connection);
 const playbackSync = new PlaybackSyncService(provider, connection, clockSync, Date.now, leadership);
-const librarySync = new LibrarySyncService(store, connection);
 
 const localCodeInput = document.querySelector<HTMLInputElement>('#local-code-input')!;
 localCodeInput.value = connection.localId;
@@ -297,14 +295,20 @@ document.querySelector('#favorite-btn')!.addEventListener('click', async () => {
   const trackId = provider.getState().trackId;
   if (!trackId) return;
   const title = (provider as any).getVideoTitle?.();
-  const item = await store.put({ id: `favorite:${trackId}`, kind: 'favorite', trackId, title });
-  librarySync.broadcastLocalChange(item);
+  await store.put({ id: `favorite:${trackId}`, kind: 'favorite', trackId, title });
 });
+
+async function clearLibrary(kind: 'favorite' | 'history'): Promise<void> {
+  await store.clear(kind);
+}
+
+document.querySelector('#clear-favorites-btn')!.addEventListener('click', () => void clearLibrary('favorite'));
+document.querySelector('#clear-history-btn')!.addEventListener('click', () => void clearLibrary('history'));
 
 for (const listId of ['favorites-list', 'history-list']) {
   document.querySelector(`#${listId}`)!.addEventListener('click', (event) => {
     if (!leadership.isLeader()) return;
-    const trackId = (event.target as HTMLElement).dataset.track;
+    const trackId = (event.target as HTMLElement).closest<HTMLElement>('[data-track]')?.dataset.track;
     if (trackId) void playbackSync.load(trackId);
   });
 }
@@ -451,8 +455,7 @@ provider.onStateChange((state) => {
     const trackId = state.trackId;
     void (async () => {
       const title = (provider as any).getVideoTitle?.();
-      const item = await store.put({ id: `history:${trackId}`, kind: 'history', trackId, title });
-      librarySync.broadcastLocalChange(item);
+      await store.put({ id: `history:${trackId}`, kind: 'history', trackId, title });
     })();
   }
 });

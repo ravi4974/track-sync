@@ -8,41 +8,22 @@ function createStore(): LibraryStore {
 }
 
 describe('LibraryStore', () => {
-  it('applies a remote item that has no local counterpart', async () => {
+  it('clears only the requested kind locally', async () => {
     const store = createStore();
-    const applied = await store.merge({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc', updatedAt: 100 });
-    expect(applied).toBe(true);
-    const items = await store.getAll();
-    expect(items).toHaveLength(1);
+    await store.put({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc' });
+    await store.put({ id: 'history:def', kind: 'history', trackId: 'def' });
+
+    await store.clear('favorite');
+
+    expect(await store.getAll()).toEqual([expect.objectContaining({ id: 'history:def' })]);
   });
 
-  it('rejects a remote item older than the local one (last-write-wins)', async () => {
-    const store = createStore();
-    await store.merge({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc', updatedAt: 200 });
-    const applied = await store.merge({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc', updatedAt: 100 });
-    expect(applied).toBe(false);
-  });
-
-  it('accepts a remote item newer than the local one', async () => {
-    const store = createStore();
-    await store.merge({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc', updatedAt: 100 });
-    const applied = await store.merge({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc', updatedAt: 200 });
-    expect(applied).toBe(true);
-  });
-
-  it('excludes soft-deleted items from getAll', async () => {
-    const store = createStore();
-    await store.merge({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc', updatedAt: 100, deletedAt: 100 });
-    const items = await store.getAll();
-    expect(items).toHaveLength(0);
-  });
-
-  it('notifies listeners on put and merge', async () => {
+  it('notifies listeners on put and clear', async () => {
     const store = createStore();
     let notifications = 0;
     store.onChange(() => (notifications += 1));
     await store.put({ id: 'favorite:abc', kind: 'favorite', trackId: 'abc' });
-    await store.merge({ id: 'favorite:def', kind: 'favorite', trackId: 'def', updatedAt: 1 });
+    await store.clear('favorite');
     expect(notifications).toBe(2);
   });
 
@@ -70,19 +51,6 @@ describe('LibraryStore', () => {
     expect(item.title).toBe('Recently Watched Video');
     const items = await store.getAll();
     expect(items[0].title).toBe('Recently Watched Video');
-  });
-
-  it('preserves titles when merging remote items', async () => {
-    const store = createStore();
-    await store.merge({
-      id: 'favorite:abc',
-      kind: 'favorite',
-      trackId: 'abc',
-      title: 'Remote Title',
-      updatedAt: 100,
-    });
-    const items = await store.getAll();
-    expect(items[0].title).toBe('Remote Title');
   });
 
   it('handles items without titles gracefully', async () => {

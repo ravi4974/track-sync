@@ -9,7 +9,6 @@ export interface LibraryItem {
   title?: string;
   playlistName?: string;
   updatedAt: number;
-  deletedAt?: number | null;
 }
 
 const DB_NAME = 'youtube-sync';
@@ -35,11 +34,9 @@ export class LibraryStore {
 
   async getAll(): Promise<LibraryItem[]> {
     const db = await this.dbPromise;
-    const items: LibraryItem[] = await db.getAll(STORE_NAME);
-    return items.filter((item) => !item.deletedAt);
+    return db.getAll(STORE_NAME);
   }
 
-  /** Writes a local change and returns it with a fresh updatedAt, ready to broadcast. */
   async put(item: Omit<LibraryItem, 'updatedAt'>): Promise<LibraryItem> {
     const full: LibraryItem = { ...item, updatedAt: Date.now() };
     const db = await this.dbPromise;
@@ -48,14 +45,15 @@ export class LibraryStore {
     return full;
   }
 
-  /** Applies a remote item using last-write-wins; returns true if it was applied. */
-  async merge(remote: LibraryItem): Promise<boolean> {
+  async clear(kind: LibraryItemKind): Promise<void> {
     const db = await this.dbPromise;
-    const local: LibraryItem | undefined = await db.get(STORE_NAME, remote.id);
-    if (local && local.updatedAt >= remote.updatedAt) return false;
-    await db.put(STORE_NAME, remote);
+    const items: LibraryItem[] = await db.getAll(STORE_NAME);
+    const ids = items.filter((item) => item.kind === kind).map((item) => item.id);
+    if (ids.length === 0) return;
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    await Promise.all(ids.map((id) => transaction.store.delete(id)));
+    await transaction.done;
     this.notify();
-    return true;
   }
 
   onChange(cb: () => void): void {
